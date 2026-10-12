@@ -199,6 +199,10 @@ O agente lembra o que foi dito na conversa: o histórico fica salvo em SQLite no
 caminho de `AGENT_MEMORY_PATH`. No chat, digite `sair` para encerrar ou `/apagar`
 para apagar a conversa atual.
 
+Com `TAVILY_API_KEY` no `.env` (opcional, plano gratuito em https://app.tavily.com),
+o agente também busca na web informação atual que não está na base (eventos,
+acessibilidade, se um lugar ainda funciona), sempre citando a fonte.
+
 ---
 
 ## Variáveis de Ambiente

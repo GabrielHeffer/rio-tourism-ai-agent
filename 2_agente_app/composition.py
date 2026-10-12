@@ -2,10 +2,12 @@
 Composition root: conecta os adapters concretos aos ports e monta o grafo do agente
 """
 
+import logging
+import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -15,14 +17,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import shared.settings  # noqa: F401
 from shared.settings import resolve_agent_memory_path
 
+from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from adapters.chromadb_adapter import ChromaDBAdapter
 from adapters.openrouter_adapter import OpenRouterAdapter
+from adapters.tavily_adapter import TavilyAdapter
 from graph.agent_graph import build_agent_graph
 from graph.prompts import TOURISM_AGENT_SYSTEM_PROMPT
 from graph.tools.rag_tool import build_search_tourist_spots_tool
+from graph.tools.web_search_tool import build_search_web_tool
+from ports.vector_store_port import VectorStorePort
+
+logger = logging.getLogger(__name__)
 
 _agent_graph = None
 _checkpointer: Optional[BaseCheckpointSaver] = None
@@ -48,13 +56,28 @@ def get_checkpointer() -> BaseCheckpointSaver:
     return _checkpointer
 
 
+def build_tools(vector_store: VectorStorePort) -> List[BaseTool]:
+    """Monta as tools do agente: a busca na base sempre; a busca na web so com TAVILY_API_KEY.
+
+    A busca na web e opcional: sem a chave o agente funciona normalmente, so com a base.
+    """
+    tools = [build_search_tourist_spots_tool(vector_store)]
+
+    if not os.getenv("TAVILY_API_KEY"):
+        logger.warning("TAVILY_API_KEY nao configurada: agente sem busca na web")
+        return tools
+
+    tools.append(build_search_web_tool(TavilyAdapter()))
+    return tools
+
+
 def get_agent_graph():
     """Constroi o grafo do agente com os adapters padrao na primeira chamada, reutiliza depois"""
     global _agent_graph
     if _agent_graph is None:
         llm = OpenRouterAdapter()
         vector_store = ChromaDBAdapter()
-        tools = [build_search_tourist_spots_tool(vector_store)]
+        tools = build_tools(vector_store)
         _agent_graph = build_agent_graph(
             llm,
             tools,

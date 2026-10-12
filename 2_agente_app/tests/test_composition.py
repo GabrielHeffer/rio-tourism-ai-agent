@@ -57,36 +57,36 @@ class TestGetAgentGraph:
         composition._agent_graph = None
 
     @patch("composition.get_checkpointer")
-    @patch("composition.build_search_tourist_spots_tool")
+    @patch("composition.build_tools")
     @patch("composition.build_agent_graph")
     @patch("composition.ChromaDBAdapter")
     @patch("composition.OpenRouterAdapter")
     def test_builds_graph_with_default_adapters(
-        self, mock_openrouter, mock_chromadb, mock_build_agent_graph, mock_build_tool, mock_get_checkpointer
+        self, mock_openrouter, mock_chromadb, mock_build_agent_graph, mock_build_tools, mock_get_checkpointer
     ):
-        """Constroi os adapters, a tool de RAG e o grafo com prompt de sistema e checkpointer"""
+        """Constroi os adapters, as tools e o grafo com prompt de sistema e checkpointer"""
         mock_build_agent_graph.return_value = Mock()
 
         graph = composition.get_agent_graph()
 
         mock_openrouter.assert_called_once_with()
         mock_chromadb.assert_called_once_with()
-        mock_build_tool.assert_called_once_with(mock_chromadb.return_value)
+        mock_build_tools.assert_called_once_with(mock_chromadb.return_value)
         mock_build_agent_graph.assert_called_once_with(
             mock_openrouter.return_value,
-            [mock_build_tool.return_value],
+            mock_build_tools.return_value,
             system_prompt=TOURISM_AGENT_SYSTEM_PROMPT,
             checkpointer=mock_get_checkpointer.return_value,
         )
         assert graph is mock_build_agent_graph.return_value
 
     @patch("composition.get_checkpointer")
-    @patch("composition.build_search_tourist_spots_tool")
+    @patch("composition.build_tools")
     @patch("composition.build_agent_graph")
     @patch("composition.ChromaDBAdapter")
     @patch("composition.OpenRouterAdapter")
     def test_second_call_reuses_cached_graph(
-        self, mock_openrouter, mock_chromadb, mock_build_agent_graph, mock_build_tool, mock_get_checkpointer
+        self, mock_openrouter, mock_chromadb, mock_build_agent_graph, mock_build_tools, mock_get_checkpointer
     ):
         """A segunda chamada nao reconstroi nada, reaproveita o grafo ja montado"""
         mock_build_agent_graph.return_value = Mock()
@@ -97,6 +97,30 @@ class TestGetAgentGraph:
         assert first_graph is second_graph
         mock_openrouter.assert_called_once()
         mock_build_agent_graph.assert_called_once()
+
+
+class TestBuildTools:
+    """A busca na web e opcional: so entra com TAVILY_API_KEY configurada"""
+
+    @patch("composition.TavilyAdapter")
+    def test_with_tavily_key_registers_rag_and_web_tools(self, mock_tavily, monkeypatch):
+        """Com a chave, o agente tem a busca na base e a busca na web"""
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-chave-de-teste")
+
+        tools = composition.build_tools(Mock())
+
+        assert [tool.name for tool in tools] == ["search_tourist_spots", "search_web"]
+        mock_tavily.assert_called_once_with()
+
+    @patch("composition.TavilyAdapter")
+    def test_without_tavily_key_registers_only_rag_tool(self, mock_tavily, monkeypatch):
+        """Sem a chave, o agente sobe so com a busca na base, sem erro"""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+        tools = composition.build_tools(Mock())
+
+        assert [tool.name for tool in tools] == ["search_tourist_spots"]
+        mock_tavily.assert_not_called()
 
 
 class TestBuildCheckpointer:

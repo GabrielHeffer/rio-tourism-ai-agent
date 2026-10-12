@@ -21,6 +21,8 @@ dependencies = [
     "langgraph>=1.0",
     # Memoria de curto prazo do agente (checkpointer persistido em SQLite)
     "langgraph-checkpoint-sqlite>=3.1",
+    # Busca na web do agente (tool search_web)
+    "tavily-python>=0.8",
 
     # Vector Database - Armazenamento de Embeddings
     "chromadb>=1.5",

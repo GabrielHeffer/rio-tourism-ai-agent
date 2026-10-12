@@ -203,20 +203,23 @@ riotur_category_links ──→ riotur_item_details ──→ riotur_documents �
 ┌───────────────────────────────────────────────┐
 │                 DOMAIN                         │
 │  Entidades puras de negócio                    │
-│  (TouristSpot, SearchResult, Conversation)     │
+│  (TouristSpot, SearchResult, WebResult)        │
 ├───────────────────────────────────────────────┤
 │                 PORTS                          │
 │  Interfaces abstratas (contratos)              │
-│  (VectorStorePort ✅, LLMPort ✅, WeatherPort)   │
+│  (VectorStorePort ✅, LLMPort ✅,                │
+│   WebSearchPort ✅, WeatherPort)                │
 ├───────────────────────────────────────────────┤
 │                 ADAPTERS                       │
 │  Implementações concretas                      │
-│  (ChromaDBAdapter ✅, OpenRouterAdapter ✅, ...) │
+│  (ChromaDBAdapter ✅, OpenRouterAdapter ✅,      │
+│   TavilyAdapter ✅, ...)                        │
 ├───────────────────────────────────────────────┤
 │                 GRAPH                          │
 │  Orquestração com LangGraph                    │
 │  (nós, arestas, estado, ferramentas)           │
 │  ✅ tools/rag_tool.py — search_tourist_spots    │
+│  ✅ tools/web_search_tool.py — search_web       │
 │  ✅ state.py, prompts.py, agent_graph.py        │
 └───────────────────────────────────────────────┘
         ▲
@@ -235,11 +238,15 @@ O loop do agente (`graph/agent_graph.py`) é o `StateGraph` clássico de tool-ca
 **Memória de curto prazo (histórico da conversa):** o grafo é compilado com um *checkpointer* do LangGraph, que salva o `AgentState` ao fim de cada execução e o recarrega na próxima chamada com o mesmo `thread_id` (`config={"configurable": {"thread_id": ...}}`). Por isso `handle_message(user_message, thread_id)` envia **só a mensagem nova**. Três regras:
 - **Checkpointer injetado:** `build_agent_graph(llm, tools, system_prompt, checkpointer=None)` não sabe onde o histórico vive. O `composition.py` cria um `SqliteSaver` (pacote `langgraph-checkpoint-sqlite`) no arquivo de `AGENT_MEMORY_PATH`, com `check_same_thread=False`, porque o `ToolNode` roda tools em threads. Nos testes do grafo, use `InMemorySaver`.
 - **Prompt de sistema fora do estado:** o nó `agent` coloca o `SystemMessage` na frente das mensagens só na hora de chamar o LLM. Ele nunca é gravado no histórico; assim não se repete, e trocar o prompt vale também para conversas antigas.
-- **Janela:** o LLM recebe só as últimas `MAX_HISTORY_MESSAGES` (20) mensagens, via `select_recent_messages` (`trim_messages` com `start_on="human"`, para nunca começar num resultado de tool órfão). O histórico completo continua salvo.
+- **Data de hoje no prompt:** o modelo não sabe a data atual. Sem ela, apresentou um evento antigo da web como se fosse do "próximo sábado". A cada chamada, o nó acrescenta `build_current_date_context(...)` (`graph/prompts.py`): a data por extenso em português, com nomes fixos no código para não depender do locale do Windows, e as regras de comparar a data dos eventos com a data pedida. A data vem de `current_date_provider` (padrão `date.today`), injetável para os testes fixarem o dia.
+- **Janela:** `select_recent_messages` envia ao LLM o **turno atual inteiro** (a última pergunta e todas as buscas feitas para ela, nunca cortado) mais as trocas anteriores que couberem em `MAX_HISTORY_MESSAGES` (20). Essas trocas são cortadas com `trim_messages(start_on="human")`, para nunca começar num resultado de tool órfão. O histórico completo continua salvo. *Bug já corrigido:* a primeira versão aplicava a janela a tudo; um turno com ~26 mensagens de busca descartava a própria pergunta, e o LLM respondia como se a conversa estivesse começando.
+- **Limite de buscas por pergunta:** depois de `MAX_TOOL_ROUNDS` (3) rodadas de tools desde a última pergunta, o nó `agent` chama o LLM **sem tools** e com o aviso `TOOL_LIMIT_NOTICE`, obrigando a resposta com o que já tem. Isso protege os créditos do Tavily: um "monta um roteiro" chegou a fazer ~15 buscas na web.
 
 `composition.delete_conversation(thread_id)` apaga uma conversa (dados pessoais / LGPD). Isto **não** é memória de longo prazo: não há fatos por usuário entre conversas.
 
-**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `graph/tools/rag_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`, memória de curto prazo (checkpointer SQLite). Pendente: memória de longo prazo (fatos por usuário, `Store` do LangGraph), outras tools (clima, Google Places, busca na internet) e uma API HTTP para expor o agente (hoje só o chat local do `main.py`).
+**Busca na web (tool `search_web`):** segunda tool do agente, para informação atual ou ausente da base (eventos, se um lugar ainda funciona, acessibilidade, lotação, preços). O LLM escolhe entre ela e a `search_tourist_spots` pela descrição de cada tool; a base continua sendo a fonte principal das recomendações. Implementação no mesmo padrão do RAG: `WebSearchPort` (`ports/web_search_port.py`) → `TavilyAdapter` (`adapters/tavily_adapter.py`, SDK `tavily-python`, `search_depth="basic"` para economizar créditos; falha da API devolve lista vazia, sem derrubar a conversa) → `build_search_web_tool` (`graph/tools/web_search_tool.py`). A tool é **opcional**: `composition.build_tools()` só a registra se `TAVILY_API_KEY` existir. **Defesa contra *prompt injection*:** conteúdo da web é de terceiros. Por isso o resultado da tool abre com o aviso `EXTERNAL_CONTENT_NOTICE` (dado, nunca instrução), cada trecho é cortado em `MAX_CONTENT_CHARS`, e o prompt de sistema também manda ignorar instruções vindas de páginas e citar a URL de toda informação tirada da web.
+
+**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `domain/web_result.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `ports/web_search_port.py`, `adapters/tavily_adapter.py`, `graph/tools/rag_tool.py`, `graph/tools/web_search_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`, memória de curto prazo (checkpointer SQLite). Pendente: memória de longo prazo (fatos por usuário, `Store` do LangGraph), outras tools (clima, Google Places) e uma API HTTP para expor o agente (hoje só o chat local do `main.py`).
 
 ### 5.4 Padrão de Camadas (ETL)
 
@@ -261,7 +268,7 @@ O loop do agente (`graph/agent_graph.py`) é o `StateGraph` clássico de tool-ca
 | **Multi-tenant Collection** | `ChromaVectorStore.load_documents(documents, source=..., replace_existing=...)` | Uma única collection `riotur-turismo` compartilhada por múltiplas fontes. Cada documento é tagueado com `metadata["fonte"]`. `replace_existing=True` (padrão) substitui só os documentos da `source` informada (`collection.delete(where={"fonte": source})`) antes de inserir, preservando dados de outras fontes; `replace_existing=False` só faz append (sem apagar nada). |
 | **Facade** | `category_links_extractor.py` — `extract_all_categories_sync()` | Interface simples que esconde a complexidade do Playwright assíncrono |
 | **Factory** | `document_transformer.py` — `generate_document()` | Seleciona o template correto baseado na seção do item |
-| **Dependency Injection** | Assets Dagster; `graph/tools/rag_tool.py` — `build_search_tourist_spots_tool(vector_store)`; `graph/agent_graph.py` — `build_agent_graph(llm, tools)` | Cada asset recebe os dados do asset anterior via parâmetro da função (sem acoplamento). A tool de RAG e o grafo do agente recebem a `VectorStorePort`/`LLMPort` já construídas — `graph/` nunca instancia `ChromaDBAdapter`/`OpenRouterAdapter` diretamente. |
+| **Dependency Injection** | Assets Dagster; `graph/tools/rag_tool.py` — `build_search_tourist_spots_tool(vector_store)`; `graph/tools/web_search_tool.py` — `build_search_web_tool(web_search)`; `graph/agent_graph.py` — `build_agent_graph(llm, tools, system_prompt, checkpointer)` | Cada asset recebe os dados do asset anterior via parâmetro da função (sem acoplamento). As tools e o grafo do agente recebem `VectorStorePort`/`WebSearchPort`/`LLMPort` e o checkpointer já construídos — `graph/` nunca instancia `ChromaDBAdapter`/`TavilyAdapter`/`OpenRouterAdapter` diretamente. |
 | **Composition Root** | `2_agente_app/composition.py` — `get_agent_graph()` | Único lugar que conhece as implementações concretas (`OpenRouterAdapter`, `ChromaDBAdapter`) e as injeta nos factories de `graph/`. Construção preguiçosa e cacheada (`OpenRouterAdapter()` falha na hora se faltar `OPENROUTER_API_KEY`). `main.py` (e uma futura API) só importam `get_agent_graph()` daqui — nunca instanciam adapter nenhum sozinhos. |
 | **Chain of Responsibility** | `item_details_extractor.py` — `extract_hours()` | Tenta múltiplas estratégias em sequência até encontrar o dado |
 
@@ -294,19 +301,23 @@ rio-tourism-ai-agent/
 │   ├── composition.py                 ← Composition root: get_agent_graph() conecta adapters e checkpointer SQLite aos ports
 │   ├── domain/
 │   │   ├── tourist_spot.py            ← Entidade: ponto turístico/restaurante/hospedagem
-│   │   └── search_result.py           ← Entidade: resultado de busca semântica
+│   │   ├── search_result.py           ← Entidade: resultado de busca semântica
+│   │   └── web_result.py              ← Entidade: página encontrada na busca na web
 │   ├── ports/
 │   │   ├── vector_store_port.py       ← VectorStorePort: contrato de busca semântica
-│   │   └── llm_port.py                ← LLMPort: contrato de geração de resposta (+ tool-calling)
+│   │   ├── llm_port.py                ← LLMPort: contrato de geração de resposta (+ tool-calling)
+│   │   └── web_search_port.py         ← WebSearchPort: contrato de busca na web
 │   ├── adapters/
 │   │   ├── chromadb_adapter.py        ← ChromaDBAdapter: implementa VectorStorePort via shared/vector_store.py
-│   │   └── openrouter_adapter.py      ← OpenRouterAdapter: implementa LLMPort via langchain_openai.ChatOpenAI
+│   │   ├── openrouter_adapter.py      ← OpenRouterAdapter: implementa LLMPort via langchain_openai.ChatOpenAI
+│   │   └── tavily_adapter.py          ← TavilyAdapter: implementa WebSearchPort via SDK tavily-python
 │   └── graph/
 │       ├── state.py                   ← AgentState: historico de mensagens (TypedDict + add_messages)
 │       ├── prompts.py                 ← TOURISM_AGENT_SYSTEM_PROMPT: persona/tom/idioma
 │       ├── agent_graph.py             ← build_agent_graph: StateGraph do loop agent→tools→agent (+ checkpointer e janela)
 │       └── tools/                     ← Uma tool por arquivo (SRP)
-│           └── rag_tool.py            ← build_search_tourist_spots_tool: tool de RAG (StructuredTool)
+│           ├── rag_tool.py            ← build_search_tourist_spots_tool: tool de RAG (StructuredTool)
+│           └── web_search_tool.py     ← build_search_web_tool: busca na web, saída marcada como conteúdo externo
 │           # weather_tool.py, google_places_tool.py [pendentes]
 │
 ├── data_raw/                          ← Saídas do ETL (fora do Git; regeneradas pelo Dagster)
@@ -517,6 +528,7 @@ Nunca rode o agente enquanto `chromadb_turismo_rio` estiver carregando: dois pro
 |---|---|---|
 | `OPENROUTER_API_KEY` | Chave do provedor LLM (OpenRouter) | Sim |
 | `OPENROUTER_MODEL` | Modelo usado no OpenRouter (padrão: `deepseek/deepseek-v4-flash-0731`) | Não |
+| `TAVILY_API_KEY` | Busca na web do agente (tool `search_web`). Sem ela o agente funciona só com a base turística | Não |
 | `OPENWEATHER_API_KEY` | API de clima em tempo real | Não |
 | `GOOGLE_PLACES_API_KEY` | API de locais do Google | Não |
 | `CHROMA_DB_PATH` | Caminho do banco vetorial (relativo é ancorado na raiz do repo). **Fora de pastas sincronizadas** (OneDrive etc.) — a sincronização corrompe o índice HNSW (`Error loading hnsw index`); nesse caso use caminho absoluto | Sim (padrão: `./chroma_db_rio`) |
