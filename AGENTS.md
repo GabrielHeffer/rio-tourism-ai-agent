@@ -228,11 +228,18 @@ riotur_category_links ──→ riotur_item_details ──→ riotur_documents �
 
 `LLMPort` (`ports/llm_port.py`) fala o vocabulário do LangChain (`BaseMessage`, `AIMessage`, `BaseTool`) em vez de um tipo de domínio próprio — decisão deliberada, já que `graph/` é 100% comprometido com LangGraph e não há benefício em esconder esses tipos atrás de outro wrapper. O que a porta isola é **o provedor/modelo** por trás (`OpenRouterAdapter`, em `adapters/openrouter_adapter.py`, usa `langchain_openai.ChatOpenAI` apontado pro endpoint OpenAI-compatible do OpenRouter — modelo e API key configuráveis via `OPENROUTER_MODEL`/`OPENROUTER_API_KEY`).
 
-**`composition.py` é o composition root de verdade** (não `main.py`): conecta `OpenRouterAdapter`+`ChromaDBAdapter` às ports e monta o grafo via `get_agent_graph()` (construção preguiçosa e cacheada — `OpenRouterAdapter()` levanta erro na hora se `OPENROUTER_API_KEY` não estiver setada, então nada é construído até a primeira mensagem chegar). `main.py` é só **um** dos pontos de entrada possíveis (`handle_message(user_message, history=None)`) — uma API HTTP futura importaria `composition.get_agent_graph()` do mesmo jeito, sem depender de `main.py`.
+**`composition.py` é o composition root de verdade** (não `main.py`): conecta `OpenRouterAdapter`+`ChromaDBAdapter` às ports e monta o grafo via `get_agent_graph()` (construção preguiçosa e cacheada — `OpenRouterAdapter()` levanta erro na hora se `OPENROUTER_API_KEY` não estiver setada, então nada é construído até a primeira mensagem chegar). `main.py` é só **um** dos pontos de entrada possíveis (`handle_message(user_message, thread_id)`) — uma API HTTP futura importaria `composition.get_agent_graph()` do mesmo jeito, sem depender de `main.py`.
 
 O loop do agente (`graph/agent_graph.py`) é o `StateGraph` clássico de tool-calling: nó `agent` chama `LLMPort.generate_response(messages, tools)`; `tools_condition` (utilitário do LangGraph) olha se a resposta tem `tool_calls` — se sim, roteia pro nó `tools` (`ToolNode`, executa a tool e devolve `ToolMessage`) e volta pro `agent`; se não, vai pro `END` com a resposta final. Repete até o LLM responder sem pedir tool.
 
-**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `graph/tools/rag_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`. Pendente: a entidade `Conversation`/persistência de histórico entre processos, outras tools (clima, Google Places), e uma API HTTP pra expor o agente (hoje só `main.handle_message` local).
+**Memória de curto prazo (histórico da conversa):** o grafo é compilado com um *checkpointer* do LangGraph, que salva o `AgentState` ao fim de cada execução e o recarrega na próxima chamada com o mesmo `thread_id` (`config={"configurable": {"thread_id": ...}}`). Por isso `handle_message(user_message, thread_id)` envia **só a mensagem nova**. Três regras:
+- **Checkpointer injetado:** `build_agent_graph(llm, tools, system_prompt, checkpointer=None)` não sabe onde o histórico vive. O `composition.py` cria um `SqliteSaver` (pacote `langgraph-checkpoint-sqlite`) no arquivo de `AGENT_MEMORY_PATH`, com `check_same_thread=False`, porque o `ToolNode` roda tools em threads. Nos testes do grafo, use `InMemorySaver`.
+- **Prompt de sistema fora do estado:** o nó `agent` coloca o `SystemMessage` na frente das mensagens só na hora de chamar o LLM. Ele nunca é gravado no histórico; assim não se repete, e trocar o prompt vale também para conversas antigas.
+- **Janela:** o LLM recebe só as últimas `MAX_HISTORY_MESSAGES` (20) mensagens, via `select_recent_messages` (`trim_messages` com `start_on="human"`, para nunca começar num resultado de tool órfão). O histórico completo continua salvo.
+
+`composition.delete_conversation(thread_id)` apaga uma conversa (dados pessoais / LGPD). Isto **não** é memória de longo prazo: não há fatos por usuário entre conversas.
+
+**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `graph/tools/rag_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`, memória de curto prazo (checkpointer SQLite). Pendente: memória de longo prazo (fatos por usuário, `Store` do LangGraph), outras tools (clima, Google Places, busca na internet) e uma API HTTP para expor o agente (hoje só o chat local do `main.py`).
 
 ### 5.4 Padrão de Camadas (ETL)
 
@@ -283,8 +290,8 @@ rio-tourism-ai-agent/
 │   └── __init__.py
 │
 ├── 2_agente_app/                      ← Agente IA (Bounded Context 2)
-│   ├── main.py                        ← Entry point local: handle_message(user_message, history=None)
-│   ├── composition.py                 ← Composition root: get_agent_graph() conecta adapters concretos aos ports
+│   ├── main.py                        ← Chat no terminal (--thread <id> retoma): handle_message(user_message, thread_id)
+│   ├── composition.py                 ← Composition root: get_agent_graph() conecta adapters e checkpointer SQLite aos ports
 │   ├── domain/
 │   │   ├── tourist_spot.py            ← Entidade: ponto turístico/restaurante/hospedagem
 │   │   └── search_result.py           ← Entidade: resultado de busca semântica
@@ -297,7 +304,7 @@ rio-tourism-ai-agent/
 │   └── graph/
 │       ├── state.py                   ← AgentState: historico de mensagens (TypedDict + add_messages)
 │       ├── prompts.py                 ← TOURISM_AGENT_SYSTEM_PROMPT: persona/tom/idioma
-│       ├── agent_graph.py             ← build_agent_graph: StateGraph do loop agent→tools→agent
+│       ├── agent_graph.py             ← build_agent_graph: StateGraph do loop agent→tools→agent (+ checkpointer e janela)
 │       └── tools/                     ← Uma tool por arquivo (SRP)
 │           └── rag_tool.py            ← build_search_tourist_spots_tool: tool de RAG (StructuredTool)
 │           # weather_tool.py, google_places_tool.py [pendentes]
@@ -513,6 +520,7 @@ Nunca rode o agente enquanto `chromadb_turismo_rio` estiver carregando: dois pro
 | `OPENWEATHER_API_KEY` | API de clima em tempo real | Não |
 | `GOOGLE_PLACES_API_KEY` | API de locais do Google | Não |
 | `CHROMA_DB_PATH` | Caminho do banco vetorial (relativo é ancorado na raiz do repo). **Fora de pastas sincronizadas** (OneDrive etc.) — a sincronização corrompe o índice HNSW (`Error loading hnsw index`); nesse caso use caminho absoluto | Sim (padrão: `./chroma_db_rio`) |
+| `AGENT_MEMORY_PATH` | Arquivo SQLite da memória de conversa do agente (relativo é ancorado na raiz do repo). Mesma regra do `CHROMA_DB_PATH`: **fora de pastas sincronizadas**. Contém dados pessoais: fica fora do Git (`*.sqlite`) | Não (padrão: `./agent_memory.sqlite`) |
 | `ENVIRONMENT` | `development` ou `production` | Sim |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Sim (padrão: `INFO`) |
 

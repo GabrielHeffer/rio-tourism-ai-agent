@@ -1,26 +1,64 @@
 """
-Entrypoint local/manual do agente (uso via linha de comando/teste por enquanto)
+Entrypoint local do agente: chat no terminal com memoria de conversa
+
+Cada conversa e identificada por um thread_id. O historico fica salvo no
+checkpointer (SQLite), entao rodar de novo com --thread <id> retoma a conversa.
 """
 
+import argparse
 import logging
-from typing import List, Optional
+import os
+import uuid
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-from composition import get_agent_graph
-from graph.prompts import TOURISM_AGENT_SYSTEM_PROMPT
+from composition import delete_conversation, get_agent_graph
+
+EXIT_COMMANDS = {"sair", "exit", "quit"}
+DELETE_COMMAND = "/apagar"
 
 
-def handle_message(user_message: str, history: Optional[List[BaseMessage]] = None) -> str:
-    """Recebe uma mensagem do usuario e retorna a resposta final do agente"""
-    messages = list(history) if history else [SystemMessage(content=TOURISM_AGENT_SYSTEM_PROMPT)]
-    messages.append(HumanMessage(content=user_message))
-    result = get_agent_graph().invoke({"messages": messages})
+def handle_message(user_message: str, thread_id: str) -> str:
+    """Envia a mensagem do usuario para a conversa thread_id e retorna a resposta final do agente.
+
+    So a mensagem nova e enviada: o historico da conversa e carregado pelo
+    checkpointer a partir do thread_id.
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    result = get_agent_graph().invoke({"messages": [HumanMessage(content=user_message)]}, config)
     return result["messages"][-1].content
 
 
+def parse_arguments() -> argparse.Namespace:
+    """Le os argumentos de linha de comando do chat"""
+    parser = argparse.ArgumentParser(description="Chat com o assistente de turismo do Rio")
+    parser.add_argument(
+        "--thread",
+        help="id de uma conversa anterior para retomar (sem ele, comeca uma conversa nova)",
+    )
+    return parser.parse_args()
+
+
+def run_chat(thread_id: str) -> None:
+    """Loop do chat no terminal ate o usuario sair ou apagar a conversa"""
+    # print aqui e a interface do chat de linha de comando, nao log de producao
+    print("Conversa: {}  (para retomar: --thread {})".format(thread_id, thread_id))
+    print("Digite 'sair' para encerrar ou '{}' para apagar esta conversa.\n".format(DELETE_COMMAND))
+
+    while True:
+        user_message = input("Você: ").strip()
+        if not user_message:
+            continue
+        if user_message.lower() in EXIT_COMMANDS:
+            break
+        if user_message.lower() == DELETE_COMMAND:
+            delete_conversation(thread_id)
+            print("Conversa apagada.")
+            break
+        print("\nAgente: {}\n".format(handle_message(user_message, thread_id)))
+
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    # print aqui e a saida do script de linha de comando, nao log de producao
-    answer = handle_message("Vou passar só um domingo no Rio com minha avó, que usa cadeira de rodas, e meu filho vegetariano de 8 anos. Quero ver o pôr do sol em algum lugar bonito, almoçar antes perto de lá e fugir de lugar muito cheio. Chove às vezes à tarde nessa época, então me dá um plano B coberto também. O que você sugere?")
-    print(answer)
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "WARNING").upper())
+    arguments = parse_arguments()
+    run_chat(arguments.thread or str(uuid.uuid4()))

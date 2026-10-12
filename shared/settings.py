@@ -31,3 +31,17 @@ COLLECTION_NAME = "riotur"
 #
 # O padrao tem janela de 512 tokens, que cobre a base inteira sem truncar.
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL") or "intfloat/multilingual-e5-small"
+
+DEFAULT_AGENT_MEMORY_PATH = "agent_memory.sqlite"
+
+
+def resolve_agent_memory_path() -> Path:
+    """Resolve o arquivo SQLite da memoria de conversa do agente.
+
+    Mesma regra do CHROMA_DB_PATH: um caminho absoluto e respeitado como esta, um
+    relativo e ancorado na raiz do projeto. Como o ChromaDB, o arquivo deve ficar
+    fora de pastas sincronizadas (OneDrive etc.), que travam o arquivo durante a
+    escrita.
+    """
+    memory_path = Path(os.getenv("AGENT_MEMORY_PATH") or DEFAULT_AGENT_MEMORY_PATH)
+    return memory_path if memory_path.is_absolute() else PROJECT_ROOT / memory_path

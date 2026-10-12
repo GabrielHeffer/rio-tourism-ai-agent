@@ -188,11 +188,16 @@ dagster asset materialize -f run_etl.py --select "*"
 
 > Não rode o agente enquanto o asset `chromadb_turismo_rio` estiver carregando.
 
-### 4. Iniciar Agente (em desenvolvimento)
+### 4. Conversar com o Agente
 
 ```bash
-python 2_agente_app/main.py
+python 2_agente_app/main.py                     # conversa nova (mostra o id para retomar)
+python 2_agente_app/main.py --thread <id>       # retoma uma conversa anterior
 ```
+
+O agente lembra o que foi dito na conversa: o histórico fica salvo em SQLite no
+caminho de `AGENT_MEMORY_PATH`. No chat, digite `sair` para encerrar ou `/apagar`
+para apagar a conversa atual.
 
 ---
 

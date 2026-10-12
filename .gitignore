@@ -46,6 +46,11 @@ chroma_db_rio/**
 data_raw/**
 !data_raw/.gitkeep
 
+# Memoria de conversa do agente (contem dados pessoais dos usuarios)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Arquivos antigos guardados so localmente
 _arquivo_local/
 

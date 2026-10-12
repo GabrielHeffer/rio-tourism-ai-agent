@@ -28,6 +28,8 @@ langchain>=1.0
 langchain-core>=0.1
 langchain-openai>=0.1
 langgraph>=1.0
+# Memoria de curto prazo do agente (checkpointer persistido em SQLite)
+langgraph-checkpoint-sqlite>=3.1
 
 # Vector Database - Armazenamento de Embeddings
 chromadb>=1.5
