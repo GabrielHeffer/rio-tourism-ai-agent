@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Rio Tourism AI Agent - Dependências Python
+# ═══════════════════════════════════════════════════════════════════════════
+# Versões Estáveis - Agosto 2026
+#
+# INSTALAÇÃO:
+# pip install -r requirements.txt
+#
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Testing Framework
+pytest==8.3.4
+pytest-mock==3.14.0
+pytest-cov==6.0.0
+
+# ETL Orchestration
+dagster==1.9.10
+dagster-webserver==1.9.10
+
+# Web Scraping
+playwright==1.50.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+requests==2.32.3
+
+# LLM Framework e Orquestração
+langchain>=1.0
+langchain-core>=0.1
+langchain-openai>=0.1
+langgraph>=1.0
+
+# Vector Database - Armazenamento de Embeddings
+chromadb>=1.5
+
+# Embeddings - Geração de Vetores
+sentence-transformers>=5.0
+
+# PDF Processing - Leitura de PDFs
+pypdf>=6.0
+
+# Environment Variables - Configuração segura
+python-dotenv>=1.0

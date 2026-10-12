@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dagster-dev",
+      "runtimeExecutable": "poetry",
+      "runtimeArgs": ["run", "dagster-webserver", "-f", "1_etl_ingestao/run_etl.py", "-d", "1_etl_ingestao", "-p", "3001"],
+      "port": 3001
+    }
+  ]
+}

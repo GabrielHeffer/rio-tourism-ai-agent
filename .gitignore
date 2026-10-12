@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Rio Tourism AI Agent - Git Ignore
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Variáveis de Ambiente (SEGURANÇA!)
+.env
+.env.local
+.env.*.local
+
+# Python - Cache e Compilação
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Ambientes Virtuais
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE e Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# ChromaDB - Dados do banco vetorial (gerado em runtime)
+# O .gitkeep garante que a pasta seja versionada vazia
+chroma_db_rio/**
+!chroma_db_rio/.gitkeep
+
+# Saidas do ETL (regeneradas pelo Dagster; nao publicar copia do conteudo da RioTur)
+data_raw/**
+!data_raw/.gitkeep
+
+# Arquivos antigos guardados so localmente
+_arquivo_local/
+
+# Logs
+*.log
+logs/
+
+# Testes
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dagster - storage temporario (dagster dev sem DAGSTER_HOME) e storage local
+tmp*/
+.dagster_home/
