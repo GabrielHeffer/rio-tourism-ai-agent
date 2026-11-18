@@ -244,8 +244,8 @@ class TestSelectRecentMessages:
 
         assert [message.content for message in recent] == ["pergunta 8", "resposta 8", "pergunta 9", "resposta 9"]
 
-    def test_window_never_starts_on_orphan_tool_result(self):
-        """O corte nunca deixa um resultado de busca sem o pedido correspondente"""
+    def test_previous_turns_keep_only_question_and_final_answer(self):
+        """Das trocas anteriores entram so pergunta e resposta final, sem as buscas"""
         history = [
             HumanMessage(content="pergunta antiga"),
             AIMessage(content="", tool_calls=[{"name": "search_tourist_spots", "args": {"query": "x"}, "id": "c1"}]),
@@ -257,8 +257,32 @@ class TestSelectRecentMessages:
 
         recent = select_recent_messages(history, max_messages=4)
 
-        assert isinstance(recent[0], HumanMessage)
-        assert [message.content for message in recent] == ["pergunta nova", "resposta nova"]
+        assert [message.content for message in recent] == [
+            "pergunta antiga", "resposta antiga", "pergunta nova", "resposta nova"
+        ]
+        assert not any(isinstance(message, ToolMessage) for message in recent[:2])
+
+    def test_old_tool_heavy_turns_do_not_push_out_the_start_of_the_conversation(self):
+        """Regressao: buscas antigas nao ocupam a janela e o inicio da conversa continua visivel.
+
+        Antes, uma primeira pergunta com 3 rodadas de busca ocupava 8 mensagens; poucas
+        perguntas depois ela saia da janela e o agente esquecia o contexto (o casal, a
+        festa) e chegou a negar uma recomendacao que ele mesmo tinha feito.
+        """
+        history = []
+        for turn in range(5):
+            history.append(HumanMessage(content="pergunta {}".format(turn)))
+            for round_index in range(3):
+                call_id = "c{}_{}".format(turn, round_index)
+                history.append(AIMessage(content="", tool_calls=[{"name": "search_web", "args": {"query": "q"}, "id": call_id}]))
+                history.append(ToolMessage(content="resultado", tool_call_id=call_id))
+            history.append(AIMessage(content="resposta {}".format(turn)))
+        history.append(HumanMessage(content="monta o roteiro"))
+
+        recent = select_recent_messages(history, max_messages=20)
+
+        assert recent[0].content == "pergunta 0"
+        assert recent[-1].content == "monta o roteiro"
 
     def test_llm_receives_window_plus_system_prompt(self):
         """Numa conversa longa, o LLM recebe no maximo a janela mais o prompt de sistema"""

@@ -69,6 +69,14 @@ class TestBuildSearchTouristSpotsTool:
         assert "Rua Dom Manuel, 15 - Centro" in output
         assert "quinta a domingo, das 13h as 17h" in output
 
+    def test_invoke_includes_source_url(self):
+        """Cada resultado traz a URL de origem, para o agente citar o link real e nao deduzir um"""
+        tool = build_search_tourist_spots_tool(FakeVectorStorePort([build_museu_naval_result()]))
+
+        output = tool.invoke({"query": "museu no centro"})
+
+        assert "Fonte: https://visit.rio/o-que-fazer/museu-naval/" in output
+
     def test_invoke_with_no_results_returns_friendly_message(self):
         """Sem resultados, retorna mensagem amigavel em vez de texto vazio"""
         tool = build_search_tourist_spots_tool(FakeVectorStorePort([]))

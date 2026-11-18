@@ -4,7 +4,11 @@ Testes unitarios para graph/prompts.py (data atual no prompt de sistema)
 
 from datetime import date
 
-from graph.prompts import build_current_date_context, format_date_in_portuguese
+from graph.prompts import (
+    TOURISM_AGENT_SYSTEM_PROMPT,
+    build_current_date_context,
+    format_date_in_portuguese,
+)
 
 
 class TestFormatDateInPortuguese:
@@ -37,3 +41,21 @@ class TestBuildCurrentDateContext:
         context = build_current_date_context(date(2026, 10, 12))
 
         assert "nunca apresente um evento de outra data" in context
+
+    def test_asks_to_state_interpretation_of_ambiguous_dates(self):
+        """Datas ambiguas (fim de semana com ou sem sexta) devem ter a interpretacao dita e mantida"""
+        context = build_current_date_context(date(2026, 10, 12))
+
+        assert "diga qual interpretação você está usando" in context
+
+
+class TestSystemPromptRules:
+    """Regras do prompt de sistema aprendidas nos testes de conversa"""
+
+    def test_forbids_building_links(self):
+        """So links recebidos nas buscas podem ser citados"""
+        assert "Nunca monte ou deduza um link" in TOURISM_AGENT_SYSTEM_PROMPT
+
+    def test_greets_only_in_first_answer(self):
+        """A saudacao nao se repete a cada resposta"""
+        assert "Cumprimente só na primeira resposta" in TOURISM_AGENT_SYSTEM_PROMPT

@@ -75,6 +75,10 @@ def _format_single_result(position: int, result: SearchResult) -> str:
         lines.append("Telefone: {}".format(spot.phone))
     if spot.website:
         lines.append("Site: {}".format(spot.website))
+    # Sem a URL de origem, o modelo deduzia um link "plausivel" da RioTur ao citar a
+    # fonte, e errava o caminho. Com ela, cita o link real.
+    if spot.source_url:
+        lines.append("Fonte: {}".format(spot.source_url))
 
     lines.append(result.document)
     return "\n".join(lines)

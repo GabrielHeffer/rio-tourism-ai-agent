@@ -10,7 +10,14 @@ entao este modulo nao sabe se o historico vive em memoria ou em SQLite.
 from datetime import date
 from typing import Callable, List, Optional
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, trim_messages
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+    trim_messages,
+)
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -23,7 +30,8 @@ from ports.llm_port import LLMPort
 
 # Quantas mensagens recentes o LLM recebe a cada chamada. O historico completo
 # continua salvo no checkpointer; a janela so limita o custo e o tamanho do prompt.
-# Conta tambem as mensagens das buscas (pedido de tool + resultado).
+# Das perguntas anteriores contam so pergunta + resposta (~10 trocas); a pergunta
+# atual entra inteira, com as buscas.
 MAX_HISTORY_MESSAGES = 20
 
 # Quantas rodadas de busca o agente pode fazer para responder uma mesma pergunta.
@@ -45,14 +53,24 @@ def find_last_human_index(messages: List[BaseMessage]) -> int:
     return -1
 
 
+def is_tool_exchange(message: BaseMessage) -> bool:
+    """Diz se a mensagem e parte de uma busca: pedido de tool do LLM ou resultado da tool"""
+    return isinstance(message, ToolMessage) or (isinstance(message, AIMessage) and bool(message.tool_calls))
+
+
 def select_recent_messages(messages: List[BaseMessage], max_messages: int) -> List[BaseMessage]:
     """Seleciona as mensagens enviadas ao LLM: o turno atual inteiro mais as trocas anteriores que couberem.
 
     O turno atual (a ultima pergunta do usuario e todas as buscas feitas para
     responde-la) nunca e cortado: um turno com muitas buscas em paralelo passava
     sozinho da janela, o corte descartava a propria pergunta e o LLM ficava sem
-    conversa nenhuma. A janela limita so as trocas anteriores, e sempre a partir de
-    uma mensagem do usuario, para nao deixar resultado de tool sem o pedido.
+    conversa nenhuma.
+
+    Das trocas anteriores entram so a pergunta e a resposta final, sem as buscas:
+    a resposta ja resume o que importava delas, e as buscas antigas ocupavam a
+    janela a ponto de o agente esquecer o inicio da conversa (e ate "corrigir" uma
+    recomendacao que ele mesmo tinha feito). O corte comeca sempre numa mensagem
+    do usuario.
     """
     last_human_index = find_last_human_index(messages)
     if last_human_index < 0:
@@ -63,8 +81,11 @@ def select_recent_messages(messages: List[BaseMessage], max_messages: int) -> Li
     if previous_budget <= 0:
         return list(current_turn)
 
+    previous_dialogue = [
+        message for message in messages[:last_human_index] if not is_tool_exchange(message)
+    ]
     previous_turns = trim_messages(
-        messages[:last_human_index],
+        previous_dialogue,
         strategy="last",
         token_counter=len,
         max_tokens=previous_budget,
