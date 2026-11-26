@@ -22,11 +22,13 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from adapters.chromadb_adapter import ChromaDBAdapter
+from adapters.open_meteo_adapter import OpenMeteoAdapter
 from adapters.openrouter_adapter import OpenRouterAdapter
 from adapters.tavily_adapter import TavilyAdapter
 from graph.agent_graph import build_agent_graph
 from graph.prompts import TOURISM_AGENT_SYSTEM_PROMPT
 from graph.tools.rag_tool import build_search_tourist_spots_tool
+from graph.tools.weather_tool import build_weather_forecast_tool
 from graph.tools.web_search_tool import build_search_web_tool
 from ports.vector_store_port import VectorStorePort
 
@@ -57,12 +59,17 @@ def get_checkpointer() -> BaseCheckpointSaver:
 
 
 def build_tools(vector_store: VectorStorePort) -> List[BaseTool]:
-    """Monta as tools do agente: a busca na base sempre; a busca na web so com TAVILY_API_KEY.
+    """Monta as tools do agente: base e clima sempre; a busca na web so com TAVILY_API_KEY.
 
-    A busca na web e opcional: sem a chave o agente funciona normalmente, so com a base.
+    O clima (Open-Meteo) nao precisa de chave. A busca na web e opcional: sem a
+    chave o agente funciona normalmente, so com a base e o clima.
     """
-    tools = [build_search_tourist_spots_tool(vector_store)]
+    tools = [
+        build_search_tourist_spots_tool(vector_store),
+        build_weather_forecast_tool(OpenMeteoAdapter()),
+    ]
 
+    # O TavilyAdapter so e criado com a chave: sem ela, ele falha na construcao
     if not os.getenv("TAVILY_API_KEY"):
         logger.warning("TAVILY_API_KEY nao configurada: agente sem busca na web")
         return tools

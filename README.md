@@ -203,6 +203,9 @@ Com `TAVILY_API_KEY` no `.env` (opcional, plano gratuito em https://app.tavily.c
 o agente também busca na web informação atual que não está na base (eventos,
 acessibilidade, se um lugar ainda funciona), sempre citando a fonte.
 
+O agente também consulta a previsão do tempo do Rio (até 16 dias à frente) pelo
+Open-Meteo, que não exige chave, para sugerir praia ou um plano B coberto.
+
 ---
 
 ## Variáveis de Ambiente

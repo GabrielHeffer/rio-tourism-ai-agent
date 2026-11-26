@@ -208,18 +208,19 @@ riotur_category_links ──→ riotur_item_details ──→ riotur_documents �
 │                 PORTS                          │
 │  Interfaces abstratas (contratos)              │
 │  (VectorStorePort ✅, LLMPort ✅,                │
-│   WebSearchPort ✅, WeatherPort)                │
+│   WebSearchPort ✅, WeatherPort ✅)              │
 ├───────────────────────────────────────────────┤
 │                 ADAPTERS                       │
 │  Implementações concretas                      │
 │  (ChromaDBAdapter ✅, OpenRouterAdapter ✅,      │
-│   TavilyAdapter ✅, ...)                        │
+│   TavilyAdapter ✅, OpenMeteoAdapter ✅)         │
 ├───────────────────────────────────────────────┤
 │                 GRAPH                          │
 │  Orquestração com LangGraph                    │
 │  (nós, arestas, estado, ferramentas)           │
 │  ✅ tools/rag_tool.py — search_tourist_spots    │
 │  ✅ tools/web_search_tool.py — search_web       │
+│  ✅ tools/weather_tool.py — fetch_weather_forecast │
 │  ✅ state.py, prompts.py, agent_graph.py        │
 └───────────────────────────────────────────────┘
         ▲
@@ -247,7 +248,9 @@ O loop do agente (`graph/agent_graph.py`) é o `StateGraph` clássico de tool-ca
 
 **Busca na web (tool `search_web`):** segunda tool do agente, para informação atual ou ausente da base (eventos, se um lugar ainda funciona, acessibilidade, lotação, preços). O LLM escolhe entre ela e a `search_tourist_spots` pela descrição de cada tool; a base continua sendo a fonte principal das recomendações. Implementação no mesmo padrão do RAG: `WebSearchPort` (`ports/web_search_port.py`) → `TavilyAdapter` (`adapters/tavily_adapter.py`, SDK `tavily-python`, `search_depth="basic"` para economizar créditos; falha da API devolve lista vazia, sem derrubar a conversa) → `build_search_web_tool` (`graph/tools/web_search_tool.py`). A tool é **opcional**: `composition.build_tools()` só a registra se `TAVILY_API_KEY` existir. **Defesa contra *prompt injection*:** conteúdo da web é de terceiros. Por isso o resultado da tool abre com o aviso `EXTERNAL_CONTENT_NOTICE` (dado, nunca instrução), cada trecho é cortado em `MAX_CONTENT_CHARS`, e o prompt de sistema também manda ignorar instruções vindas de páginas e citar a URL de toda informação tirada da web.
 
-**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `domain/web_result.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `ports/web_search_port.py`, `adapters/tavily_adapter.py`, `graph/tools/rag_tool.py`, `graph/tools/web_search_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`, memória de curto prazo (checkpointer SQLite). Pendente: memória de longo prazo (fatos por usuário, `Store` do LangGraph), outras tools (clima, Google Places) e uma API HTTP para expor o agente (hoje só o chat local do `main.py`).
+**Previsão do tempo (tool `fetch_weather_forecast`):** previsão diária da cidade do Rio (não por bairro) via `WeatherPort` (`ports/weather_port.py`) → `OpenMeteoAdapter` (`adapters/open_meteo_adapter.py`, `requests` direto na API do Open-Meteo; código WMO traduzido para português; erro de rede ou da API devolve lista vazia) → `build_weather_forecast_tool` (`graph/tools/weather_tool.py`). O Open-Meteo **não exige chave**: o plano gratuito é para uso não comercial, com limite por IP (10 mil chamadas/dia). Por isso a tool é sempre registrada. Os dados são CC BY 4.0, e toda resposta da tool termina com a linha `WEATHER_SOURCE_LINE`. Regra de negócio na tool: a previsão vai de hoje até `MAX_FORECAST_DAYS` (16) dias à frente; data passada, além do alcance ou em formato inválido vira mensagem clara **sem chamar a API** (a data de hoje vem de `current_date_provider`, injetável nos testes). O prompt manda tratar a previsão como estimativa, sugerir alternativa coberta com chance de chuva alta e citar o Open-Meteo.
+
+**Implementado:** `domain/tourist_spot.py`, `domain/search_result.py`, `domain/web_result.py`, `domain/weather_forecast.py`, `ports/vector_store_port.py`, `adapters/chromadb_adapter.py`, `ports/llm_port.py`, `adapters/openrouter_adapter.py`, `ports/web_search_port.py`, `adapters/tavily_adapter.py`, `ports/weather_port.py`, `adapters/open_meteo_adapter.py`, `graph/tools/rag_tool.py`, `graph/tools/web_search_tool.py`, `graph/tools/weather_tool.py`, `graph/state.py`, `graph/prompts.py`, `graph/agent_graph.py`, `composition.py`, `main.py`, memória de curto prazo (checkpointer SQLite). Pendente: memória de longo prazo (fatos por usuário, `Store` do LangGraph), Google Places e uma API HTTP para expor o agente (hoje só o chat local do `main.py`).
 
 ### 5.4 Padrão de Camadas (ETL)
 
@@ -269,7 +272,7 @@ O loop do agente (`graph/agent_graph.py`) é o `StateGraph` clássico de tool-ca
 | **Multi-tenant Collection** | `ChromaVectorStore.load_documents(documents, source=..., replace_existing=...)` | Uma única collection `riotur-turismo` compartilhada por múltiplas fontes. Cada documento é tagueado com `metadata["fonte"]`. `replace_existing=True` (padrão) substitui só os documentos da `source` informada (`collection.delete(where={"fonte": source})`) antes de inserir, preservando dados de outras fontes; `replace_existing=False` só faz append (sem apagar nada). |
 | **Facade** | `category_links_extractor.py` — `extract_all_categories_sync()` | Interface simples que esconde a complexidade do Playwright assíncrono |
 | **Factory** | `document_transformer.py` — `generate_document()` | Seleciona o template correto baseado na seção do item |
-| **Dependency Injection** | Assets Dagster; `graph/tools/rag_tool.py` — `build_search_tourist_spots_tool(vector_store)`; `graph/tools/web_search_tool.py` — `build_search_web_tool(web_search)`; `graph/agent_graph.py` — `build_agent_graph(llm, tools, system_prompt, checkpointer)` | Cada asset recebe os dados do asset anterior via parâmetro da função (sem acoplamento). As tools e o grafo do agente recebem `VectorStorePort`/`WebSearchPort`/`LLMPort` e o checkpointer já construídos — `graph/` nunca instancia `ChromaDBAdapter`/`TavilyAdapter`/`OpenRouterAdapter` diretamente. |
+| **Dependency Injection** | Assets Dagster; `graph/tools/rag_tool.py` — `build_search_tourist_spots_tool(vector_store)`; `graph/tools/web_search_tool.py` — `build_search_web_tool(web_search)`; `graph/tools/weather_tool.py` — `build_weather_forecast_tool(weather)`; `graph/agent_graph.py` — `build_agent_graph(llm, tools, system_prompt, checkpointer)` | Cada asset recebe os dados do asset anterior via parâmetro da função (sem acoplamento). As tools e o grafo do agente recebem `VectorStorePort`/`WebSearchPort`/`WeatherPort`/`LLMPort` e o checkpointer já construídos — `graph/` nunca instancia `ChromaDBAdapter`/`TavilyAdapter`/`OpenMeteoAdapter`/`OpenRouterAdapter` diretamente. |
 | **Composition Root** | `2_agente_app/composition.py` — `get_agent_graph()` | Único lugar que conhece as implementações concretas (`OpenRouterAdapter`, `ChromaDBAdapter`) e as injeta nos factories de `graph/`. Construção preguiçosa e cacheada (`OpenRouterAdapter()` falha na hora se faltar `OPENROUTER_API_KEY`). `main.py` (e uma futura API) só importam `get_agent_graph()` daqui — nunca instanciam adapter nenhum sozinhos. |
 | **Chain of Responsibility** | `item_details_extractor.py` — `extract_hours()` | Tenta múltiplas estratégias em sequência até encontrar o dado |
 
@@ -303,23 +306,27 @@ rio-tourism-ai-agent/
 │   ├── domain/
 │   │   ├── tourist_spot.py            ← Entidade: ponto turístico/restaurante/hospedagem
 │   │   ├── search_result.py           ← Entidade: resultado de busca semântica
-│   │   └── web_result.py              ← Entidade: página encontrada na busca na web
+│   │   ├── web_result.py              ← Entidade: página encontrada na busca na web
+│   │   └── weather_forecast.py        ← Entidade: previsão do tempo de um dia (DailyForecast)
 │   ├── ports/
 │   │   ├── vector_store_port.py       ← VectorStorePort: contrato de busca semântica
 │   │   ├── llm_port.py                ← LLMPort: contrato de geração de resposta (+ tool-calling)
-│   │   └── web_search_port.py         ← WebSearchPort: contrato de busca na web
+│   │   ├── web_search_port.py         ← WebSearchPort: contrato de busca na web
+│   │   └── weather_port.py            ← WeatherPort: contrato de previsão do tempo diária
 │   ├── adapters/
 │   │   ├── chromadb_adapter.py        ← ChromaDBAdapter: implementa VectorStorePort via shared/vector_store.py
 │   │   ├── openrouter_adapter.py      ← OpenRouterAdapter: implementa LLMPort via langchain_openai.ChatOpenAI
-│   │   └── tavily_adapter.py          ← TavilyAdapter: implementa WebSearchPort via SDK tavily-python
+│   │   ├── tavily_adapter.py          ← TavilyAdapter: implementa WebSearchPort via SDK tavily-python
+│   │   └── open_meteo_adapter.py      ← OpenMeteoAdapter: implementa WeatherPort via API do Open-Meteo (sem chave)
 │   └── graph/
 │       ├── state.py                   ← AgentState: historico de mensagens (TypedDict + add_messages)
 │       ├── prompts.py                 ← TOURISM_AGENT_SYSTEM_PROMPT: persona/tom/idioma
 │       ├── agent_graph.py             ← build_agent_graph: StateGraph do loop agent→tools→agent (+ checkpointer e janela)
 │       └── tools/                     ← Uma tool por arquivo (SRP)
 │           ├── rag_tool.py            ← build_search_tourist_spots_tool: tool de RAG (StructuredTool)
-│           └── web_search_tool.py     ← build_search_web_tool: busca na web, saída marcada como conteúdo externo
-│           # weather_tool.py, google_places_tool.py [pendentes]
+│           ├── web_search_tool.py     ← build_search_web_tool: busca na web, saída marcada como conteúdo externo
+│           └── weather_tool.py        ← build_weather_forecast_tool: previsão do tempo, valida o alcance de 16 dias
+│           # google_places_tool.py [pendente]
 │
 ├── data_raw/                          ← Saídas do ETL (fora do Git; regeneradas pelo Dagster)
 │   ├── riotur_links.json              ← Asset 1: links de categorias (~1064 na extração de 29/09/2026)
@@ -530,7 +537,7 @@ Nunca rode o agente enquanto `chromadb_turismo_rio` estiver carregando: dois pro
 | `OPENROUTER_API_KEY` | Chave do provedor LLM (OpenRouter) | Sim |
 | `OPENROUTER_MODEL` | Modelo usado no OpenRouter (padrão: `deepseek/deepseek-v4-flash-0731`) | Não |
 | `TAVILY_API_KEY` | Busca na web do agente (tool `search_web`). Sem ela o agente funciona só com a base turística | Não |
-| `OPENWEATHER_API_KEY` | API de clima em tempo real | Não |
+| *(nenhuma para o clima)* | A previsão do tempo usa o Open-Meteo, que não exige chave (uso não comercial, limite por IP, dados CC BY 4.0 com fonte citada). A antiga `OPENWEATHER_API_KEY` não é usada | — |
 | `GOOGLE_PLACES_API_KEY` | API de locais do Google | Não |
 | `CHROMA_DB_PATH` | Caminho do banco vetorial (relativo é ancorado na raiz do repo). **Fora de pastas sincronizadas** (OneDrive etc.) — a sincronização corrompe o índice HNSW (`Error loading hnsw index`); nesse caso use caminho absoluto | Sim (padrão: `./chroma_db_rio`) |
 | `AGENT_MEMORY_PATH` | Arquivo SQLite da memória de conversa do agente (relativo é ancorado na raiz do repo). Mesma regra do `CHROMA_DB_PATH`: **fora de pastas sincronizadas**. Contém dados pessoais: fica fora do Git (`*.sqlite`) | Não (padrão: `./agent_memory.sqlite`) |

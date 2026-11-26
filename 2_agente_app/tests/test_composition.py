@@ -100,26 +100,26 @@ class TestGetAgentGraph:
 
 
 class TestBuildTools:
-    """A busca na web e opcional: so entra com TAVILY_API_KEY configurada"""
+    """Base e clima sempre; a busca na web so entra com TAVILY_API_KEY configurada"""
 
     @patch("composition.TavilyAdapter")
-    def test_with_tavily_key_registers_rag_and_web_tools(self, mock_tavily, monkeypatch):
-        """Com a chave, o agente tem a busca na base e a busca na web"""
+    def test_with_tavily_key_registers_rag_weather_and_web_tools(self, mock_tavily, monkeypatch):
+        """Com a chave, o agente tem a base, o clima e a busca na web"""
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-chave-de-teste")
 
         tools = composition.build_tools(Mock())
 
-        assert [tool.name for tool in tools] == ["search_tourist_spots", "search_web"]
+        assert [tool.name for tool in tools] == ["search_tourist_spots", "fetch_weather_forecast", "search_web"]
         mock_tavily.assert_called_once_with()
 
     @patch("composition.TavilyAdapter")
-    def test_without_tavily_key_registers_only_rag_tool(self, mock_tavily, monkeypatch):
-        """Sem a chave, o agente sobe so com a busca na base, sem erro"""
+    def test_without_tavily_key_registers_rag_and_weather_tools(self, mock_tavily, monkeypatch):
+        """Sem a chave, o agente sobe com a base e o clima (que nao precisa de chave)"""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
         tools = composition.build_tools(Mock())
 
-        assert [tool.name for tool in tools] == ["search_tourist_spots"]
+        assert [tool.name for tool in tools] == ["search_tourist_spots", "fetch_weather_forecast"]
         mock_tavily.assert_not_called()
 
 

@@ -56,6 +56,11 @@ class TestSystemPromptRules:
         """So links recebidos nas buscas podem ser citados"""
         assert "Nunca monte ou deduza um link" in TOURISM_AGENT_SYSTEM_PROMPT
 
+    def test_treats_forecast_as_estimate_and_cites_open_meteo(self):
+        """A previsao do tempo e apresentada como estimativa e com a fonte"""
+        assert "Previsão é estimativa" in TOURISM_AGENT_SYSTEM_PROMPT
+        assert "entre parênteses logo após os números: (Open-Meteo)" in TOURISM_AGENT_SYSTEM_PROMPT
+
     def test_greets_only_in_first_answer(self):
         """A saudacao nao se repete a cada resposta"""
         assert "Cumprimente só na primeira resposta" in TOURISM_AGENT_SYSTEM_PROMPT
